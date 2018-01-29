@@ -27,6 +27,6 @@ if __name__ == "__main__":
     }
 
     extractor = CalendarExtractor(from_s3_queue, to_db_queue)
-    event = extractor.load_raw(s3_obj)
-    txt = json.dumps(event, indent=2)
+    events = extractor.load_and_transform(s3_obj)
+    txt = json.dumps(events, indent=2, ensure_ascii=False)
     print(txt)
