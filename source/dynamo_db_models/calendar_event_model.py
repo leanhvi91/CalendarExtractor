@@ -120,6 +120,8 @@ class CalendarEventModel(Model):
     WeekDay = NumberAttribute(null=True)
     # Time of day in seconds
     Time = NumberAttribute(null=True)
+    CreatedTime = NumberAttribute(null=True)
+    UpdatedTime = NumberAttribute(null=True)
 
     # Indexes
     user_id_start_time_index = UserIdStartTimeIndex()
@@ -145,3 +147,5 @@ class CalendarEventModel(Model):
         self.Day = obj["Day"]
         self.WeekDay = obj["WeekDay"]
         self.Time = obj["Time"]
+        self.CreatedTime = obj["CreatedTime"]
+        self.UpdatedTime = obj["UpdatedTime"]

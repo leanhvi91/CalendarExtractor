@@ -4,7 +4,8 @@ import time
 import boto3
 from businesses.calendar_events import CalendarEvent
 from dynamo_db_models.calendar_event_model import CalendarEventModel
-
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 class CalendarExtractor:
     """
@@ -12,7 +13,7 @@ class CalendarExtractor:
     Extract and transform raw data to CalendarEvent type
     Store CalendarEvent objects to DynamoDB
     """
-    def __init__(self, from_s3_queue, to_db_queue, max_threads=2, sleeping_time=10, queue_timeout=0.5,batch_size=100,
+    def __init__(self, from_s3_queue, to_db_queue, max_threads=20, sleeping_time=1, queue_timeout=0.5,batch_size=100,
                  calendar_events_table="CalendarEvents"):
         """
 
@@ -28,8 +29,38 @@ class CalendarExtractor:
         self.__queue_timeout = queue_timeout
         self.__batch_size = batch_size
         self.__calendar_events_table = calendar_events_table
+        self.__command = {
+            "stop": False
+        }
 
-    def process_from_s3_queue(self, trials_max=10):
+    def start_work(self):
+        """
+
+        :return:
+        """
+        with ThreadPoolExecutor(max_workers=self.__max_threads) as executor:
+            # executor.submit(self.process_from_s3_queue, self.__from_s3_queue, self.__to_db_queue)
+            executor.submit(self.command, self.__command)
+            for i in range(10):
+                executor.submit(self.process_from_s3_queue, self.__from_s3_queue, self.__to_db_queue, self.__command)
+            executor.submit(self.process_to_db_queue, self.__to_db_queue, self.__command)
+
+    @staticmethod
+    def command(cmd):
+        """
+
+        :param cmd:
+        :return:
+        """
+        while not cmd["stop"]:
+            txt = input("Press 1 to stop: \n")
+            if txt == "1":
+                cmd["stop"] = True
+                print("STOP COMMAND IS SUBMITTED")
+
+
+    @staticmethod
+    def process_from_s3_queue(from_s3_queue, to_db_queue, command, trials_max=10, sleeping_time=1, time_out=0.1):
         """
         Get an item from __from_s3_queue
         Load raw object
@@ -38,21 +69,55 @@ class CalendarExtractor:
         Repeat until the __from_s3_queue is not empty
         :return:
         """
-        while True:
+        while not command["stop"]:
+            print("Press 1 to stop: \n")
             try:
-                s3_obj = self.__from_s3_queue.get()
-                event_items = self.load_and_transform(s3_obj)
+                # from_s3_queue = Queue(100)
+                s3_obj = from_s3_queue.get(timeout=0.1)
+                print("Thread 1 : %s" % (s3_obj))
+                event_items = CalendarExtractor.load_and_transform(s3_obj)
+                # print(event_items)
                 for event_item in event_items:
-                    trials_count = 0
-                    while trials_count < trials_max:
-                        try:
-                            self.__to_db_queue.put(item=event_item, timeout=self.__queue_timeout)
-                        except Full:
-                            trials_count += 1
-                            time.sleep(self.__sleeping_time)
-                            pass
+                    try:
+                        to_db_queue.put(item=event_item, timeout=0.1)
+                    except Full:
+                        time.sleep(sleeping_time)
+                        pass
+
             except Empty:
-                time.sleep(self.__sleeping_time)
+                time.sleep(sleeping_time)
+
+    @staticmethod
+    def process_to_db_queue(to_db_queue, command, batch_size=100, sleeping_time=1, time_out=0.1):
+        """
+        Get item from
+        :return:
+        """
+        def bath_write(w_items):
+            with CalendarEventModel.batch_write() as batch:
+                for w_item in w_items:
+                    item = CalendarEventModel(w_item)
+                    batch.save(item)
+        items = []
+        while not command["stop"]:
+            print("Press 1 to stop: \n")
+            try:
+                event_item = to_db_queue.get(timeout=0.1)
+                print("Thread 2 :%s" % event_item)
+                items.append(event_item)
+                if len(items) >= batch_size:
+                    print("DYNAMO BATCH START")
+                    bath_write(items)
+                    items = []
+                    print("DYNAMO OK")
+            except Empty:
+                print("QUEUE EMPTY")
+                if len(items) > 0:
+                    print("DYNAMO BATCH START")
+                    bath_write(items)
+                    items = []
+                    print("DYNAMO OK")
+                time.sleep(sleeping_time)
 
     @staticmethod
     def load_and_transform(s3_obj):
@@ -65,8 +130,8 @@ class CalendarExtractor:
         :return: list of objects parsed from file content
         """
         client = boto3.client("s3")
-        bucket = s3_obj["bucket"]
-        key = s3_obj["key"]
+        bucket = s3_obj["Bucket"]
+        key = s3_obj["Key"]
 
         result = client.get_object(Bucket=bucket, Key=key)
 
@@ -83,22 +148,7 @@ class CalendarExtractor:
 
         return event_items
 
-    def process_to_db_queue(self):
-        """
-        Get item from
-        :return:
-        """
-        buffer = []
-        # while True:
-        #     try:
-        #         event_item = self.__to_db_queue.get(timeout=self.__queue_timeout)
-        #         buffer.append(event_item)
-        #         if len(buffer) >= self.__batch_size:
-        #             batch_put_items(items=buffer, table=self.__calendar_events_table)
-        #     except Empty:
-        #         if len(buffer) > 0:
-        #             batch_put_items(items=buffer, table=self.__calendar_events_table)
-        #         time.sleep(self.__sleeping_time)
+
 
 
 
